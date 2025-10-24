@@ -42,7 +42,7 @@ from esphome.const import (
 from esphome.core import coroutine
 
 CODEOWNERS = ["@dudanov"]
-DEPENDENCIES = ["climate", "uart"]
+DEPENDENCIES = ["climate", "uart","ESP8266WiFi","WiFi"]
 AUTO_LOAD = ["sensor"]
 CONF_POWER_USAGE = "power_usage"
 CONF_ENERGY_USAGE = "energy_usage"
