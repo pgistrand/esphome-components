@@ -42,7 +42,7 @@ from esphome.const import (
 from esphome.core import coroutine
 
 CODEOWNERS = ["@dudanov"]
-DEPENDENCIES = ["climate", "uart","ESP8266WiFi","WiFi"]
+DEPENDENCIES = ["climate", "uart"]
 AUTO_LOAD = ["sensor"]
 CONF_POWER_USAGE = "power_usage"
 CONF_ENERGY_USAGE = "energy_usage"
@@ -446,11 +446,4 @@ async def to_code(config):
     if CONF_VAL2_12 in config:
         sens = await sensor.new_sensor(config[CONF_VAL2_12])
         cg.add(var.set_val2_12_sensor(sens))
-    cg.add_library("ESP8266WiFi", "None")
-    cg.add_library("WiFi", "None")
-    #cg.add_library("MideaUART", "1.1.9")
-    cg.add_library(
-      name="MideaUART",
-       repository="https://github.com/pgistrand/mideaUART.git",
-       version=1.1.9,
-    )
+    cg.add_library("MideaUART", "1.1.9")
