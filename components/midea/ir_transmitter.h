@@ -88,4 +88,4 @@ class IrTransmitter {
 }  // namespace esphome
 
 #endif
-#endif  // USE_ARDUINO
+#endif  // USE_ARDUINO 
