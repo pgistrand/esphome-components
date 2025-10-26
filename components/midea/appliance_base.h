@@ -92,6 +92,11 @@ template<typename T> class ApplianceBase : public Component {
   T base_;
   UARTStream stream_;
 #ifdef USE_REMOTE_TRANSMITTER
+  static const uint8_t MIN_TEMP_C = 0;
+  static const uint8_t MAX_TEMP_C = 37;
+  static const uint8_t MIN_TEMP_F = 32;
+  static const uint8_t MAX_TEMP_F = 99; 
+
   IrTransmitter transmitter_;
 #endif
 };
