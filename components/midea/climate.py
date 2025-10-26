@@ -446,4 +446,4 @@ async def to_code(config):
     if CONF_VAL2_12 in config:
         sens = await sensor.new_sensor(config[CONF_VAL2_12])
         cg.add(var.set_val2_12_sensor(sens))
-    cg.add_library("MideaUART", "1.1.9")
+    cg.add_library("MideaUART", "1.1.10")
