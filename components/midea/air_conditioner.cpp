@@ -1,94 +1,212 @@
-#pragma once
-
 #ifdef USE_ARDUINO
 
-// MideaUART
-#include <Appliance/AirConditioner/AirConditioner.h>
-
-#include "appliance_base.h"
-#include "esphome/components/sensor/sensor.h"
+#include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
+#include "air_conditioner.h"
+#include "ac_adapter.h"
+#include <cmath>
+#include <cstdint>
 
 namespace esphome {
 namespace midea {
 namespace ac {
 
-using sensor::Sensor;
-using climate::ClimateCall;
-using climate::ClimatePreset;
-using climate::ClimateTraits;
-using climate::ClimateMode;
-using climate::ClimateSwingMode;
-using climate::ClimateFanMode;
+static void set_sensor(Sensor *sensor, float value) {
+  if (sensor != nullptr && (!sensor->has_state() || sensor->get_raw_state() != value))
+    sensor->publish_state(value);
+}
 
-class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>, public climate::Climate {
- public:
-  void dump_config() override;
-  void set_outdoor_temperature_sensor(Sensor *sensor) { this->outdoor_sensor_ = sensor; }
-  void set_t1_temperature_sensor(Sensor *sensor) { this->t1_sensor_ = sensor; }
-  void set_t2_temperature_sensor(Sensor *sensor) { this->t2_sensor_ = sensor; }
-  void set_t3_temperature_sensor(Sensor *sensor) { this->t3_sensor_ = sensor; }
-  void set_t4_temperature_sensor(Sensor *sensor) { this->t4_sensor_ = sensor; }
-  void set_eev_sensor(Sensor *sensor) { this->eev_sensor_ = sensor; }
-  void set_humidity_setpoint_sensor(Sensor *sensor) { this->humidity_sensor_ = sensor; }
-  void set_power_sensor(Sensor *sensor) { this->power_sensor_ = sensor; }
-  void set_energy_sensor(Sensor *sensor) { this->energy_sensor_ = sensor; }
-  void set_compressor_target_sensor(Sensor *sensor) { this->compressor_target_sensor_ = sensor; }
-  void set_compressor_value_sensor(Sensor *sensor) { this->compressor_value_sensor_ = sensor; }
-  void set_run_mode_sensor(Sensor *sensor) { this->run_mode_sensor_ = sensor; }
-  void set_defrost_sensor(Sensor *sensor) { this->defrost_sensor_ = sensor; }
-  void set_val1_8_sensor(Sensor *sensor) { this->val1_8_sensor_ = sensor; }
-  void set_val2_12_sensor(Sensor *sensor) { this->val2_12_sensor_ = sensor; }
-  void set_idFTarget_sensor(Sensor *sensor) { this->idFTarget_sensor_ = sensor; }
-  void set_idFVal_sensor(Sensor *sensor) { this->idFVal_sensor_ = sensor; }
-  void set_odFVal_sensor(Sensor *sensor) { this->odFVal_sensor_ = sensor; }
-  void on_status_change() override;
+template<typename T> void update_property(T &property, const T &value, bool &flag) {
+  if (property != value) {
+    property = value;
+    flag = true;
+  }
+}
 
-  /* ############### */
-  /* ### ACTIONS ### */
-  /* ############### */
+void AirConditioner::on_status_change() {
+  bool need_publish = false;
+  update_property(this->target_temperature, this->base_.getTargetTemp(), need_publish);
+  update_property(this->current_temperature, this->base_.getIndoorTemp(), need_publish);
+  auto mode = Converters::to_climate_mode(this->base_.getMode());
+  update_property(this->mode, mode, need_publish);
+  auto swing_mode = Converters::to_climate_swing_mode(this->base_.getSwingMode());
+  update_property(this->swing_mode, swing_mode, need_publish);
+  // Preset
+  auto preset = this->base_.getPreset();
+  if (Converters::is_custom_midea_preset(preset)) {
+    if (this->set_custom_preset_(Converters::to_custom_climate_preset(preset)))
+      need_publish = true;
+  } else if (this->set_preset_(Converters::to_climate_preset(preset))) {
+    need_publish = true;
+  }
+  // Fan mode
+  auto fan_mode = this->base_.getFanMode();
+  if (Converters::is_custom_midea_fan_mode(fan_mode)) {
+    if (this->set_custom_fan_mode_(Converters::to_custom_climate_fan_mode(fan_mode)))
+      need_publish = true;
+  } else if (this->set_fan_mode_(Converters::to_climate_fan_mode(fan_mode))) {
+    need_publish = true;
+  }
+  if (need_publish)
+    this->publish_state();
+  set_sensor(this->outdoor_sensor_, this->base_.getOutdoorTemp());
+  set_sensor(this->power_sensor_, this->base_.getPowerUsage());
+  set_sensor(this->energy_sensor_, this->base_.getEnergyUsage());
+  set_sensor(this->humidity_sensor_, this->base_.getIndoorHum());
+  set_sensor(this->t1_sensor_, this->base_.getT1Temp());
+  set_sensor(this->t2_sensor_, this->base_.getT2Temp());
+  set_sensor(this->t3_sensor_, this->base_.getT3Temp());
+  set_sensor(this->t4_sensor_, this->base_.getT4Temp());
+  set_sensor(this->eev_sensor_, this->base_.getEEV());
+  set_sensor(this->compressor_target_sensor_, this->base_.getCompressorTarget());
+  set_sensor(this->compressor_speed_sensor_, this->base_.getCompressorSpeed());
+  set_sensor(this->run_mode_sensor_, this->base_.getRunMode());
+  set_sensor(this->defrost_sensor_, this->base_.getDefrost());
+  set_sensor(this->val1_8_sensor_, this->base_.getVal1_8());
+  set_sensor(this->val2_12_sensor_, this->base_.getVal2_12());
+  set_sensor(this->idFTarget_sensor_, this->base_.getIdFTarget());
+  set_sensor(this->idFVal_sensor_, this->base_.getIdFVal());
+  set_sensor(this->odFVal_sensor_, this->base_.getOdFVal());
+}
 
-  void do_follow_me(float temperature, bool use_fahrenheit, bool beeper = false);
-  void do_display_toggle();
-  void do_swing_step();
-  void do_beeper_on() { this->set_beeper_feedback(true); }
-  void do_beeper_off() { this->set_beeper_feedback(false); }
-  void do_power_on() { this->base_.setPowerState(true); }
-  void do_power_off() { this->base_.setPowerState(false); }
-  void do_power_toggle() { this->base_.setPowerState(this->mode == ClimateMode::CLIMATE_MODE_OFF); }
-  void set_supported_modes(const std::set<ClimateMode> &modes) { this->supported_modes_ = modes; }
-  void set_supported_swing_modes(const std::set<ClimateSwingMode> &modes) { this->supported_swing_modes_ = modes; }
-  void set_supported_presets(const std::set<ClimatePreset> &presets) { this->supported_presets_ = presets; }
-  void set_custom_presets(const std::set<std::string> &presets) { this->supported_custom_presets_ = presets; }
-  void set_custom_fan_modes(const std::set<std::string> &modes) { this->supported_custom_fan_modes_ = modes; }
-  void set_action(climate::ClimateAction new_action);
+void AirConditioner::control(const ClimateCall &call) {
+  dudanov::midea::ac::Control ctrl{};
+  if (call.get_target_temperature().has_value())
+    ctrl.targetTemp = call.get_target_temperature().value();
+  if (call.get_swing_mode().has_value())
+    ctrl.swingMode = Converters::to_midea_swing_mode(call.get_swing_mode().value());
+  if (call.get_mode().has_value())
+    ctrl.mode = Converters::to_midea_mode(call.get_mode().value());
+  if (call.get_preset().has_value()) {
+    ctrl.preset = Converters::to_midea_preset(call.get_preset().value());
+  } else if (call.get_custom_preset().has_value()) {
+    ctrl.preset = Converters::to_midea_preset(call.get_custom_preset().value());
+  }
+  if (call.get_fan_mode().has_value()) {
+    ctrl.fanMode = Converters::to_midea_fan_mode(call.get_fan_mode().value());
+  } else if (call.get_custom_fan_mode().has_value()) {
+    ctrl.fanMode = Converters::to_midea_fan_mode(call.get_custom_fan_mode().value());
+  }
+  this->base_.control(ctrl);
 
- protected:
-  void control(const ClimateCall &call) override;
-  ClimateTraits traits() override;
-  std::set<ClimateMode> supported_modes_{};
-  std::set<ClimateSwingMode> supported_swing_modes_{};
-  std::set<ClimatePreset> supported_presets_{};
-  std::set<std::string> supported_custom_presets_{};
-  std::set<std::string> supported_custom_fan_modes_{};
-  Sensor *outdoor_sensor_{nullptr};
-  Sensor *humidity_sensor_{nullptr};
-  Sensor *power_sensor_{nullptr};
-  Sensor *energy_sensor_{nullptr};
-  Sensor *t1_sensor_{nullptr};
-  Sensor *t2_sensor_{nullptr};
-  Sensor *t3_sensor_{nullptr};
-  Sensor *t4_sensor_{nullptr};
-  Sensor *eev_sensor_{nullptr};
-  Sensor *compressor_target_sensor_{nullptr};
-  Sensor *compressor_value_sensor_{nullptr};
-  Sensor *run_mode_sensor_{nullptr};
-  Sensor *defrost_sensor_{nullptr};
-  Sensor *val1_8_sensor_{nullptr};
-  Sensor *val2_12_sensor_{nullptr};
-  Sensor *idFTarget_sensor_{nullptr};
-  Sensor *idFVal_sensor_{nullptr};
-  Sensor *odFVal_sensor_{nullptr};
-};
+  if (this->mode == climate::CLIMATE_MODE_OFF) {
+    set_action(climate::CLIMATE_ACTION_OFF);
+  } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
+    set_action(climate::CLIMATE_ACTION_HEATING);
+  } else if (this->mode == climate::CLIMATE_MODE_COOL) {
+    set_action(climate::CLIMATE_ACTION_COOLING);
+  } else {
+    set_action(climate::CLIMATE_ACTION_IDLE);
+  }
+  // After processing the call, publish the new state.
+  this->publish_state();
+}
+
+void AirConditioner::set_action(climate::ClimateAction new_action) {
+  // Only update the action if it has actually changed to prevent excessive state updates.
+  if (this->action != new_action) {
+    this->action = new_action;
+    this->publish_state();
+  }
+}
+
+ClimateTraits AirConditioner::traits() {
+  auto traits = ClimateTraits();
+  traits.set_supports_current_temperature(true);
+  traits.set_visual_min_temperature(17);
+  traits.set_visual_max_temperature(30);
+  traits.set_visual_temperature_step(0.5);
+  traits.set_supported_modes(this->supported_modes_);
+  traits.set_supported_swing_modes(this->supported_swing_modes_);
+  traits.set_supported_presets(this->supported_presets_);
+  traits.set_supported_custom_presets(this->supported_custom_presets_);
+  traits.set_supported_custom_fan_modes(this->supported_custom_fan_modes_);
+  /* + MINIMAL SET OF CAPABILITIES */
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_AUTO);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_LOW);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_MEDIUM);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_HIGH);
+  if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_OK)
+    Converters::to_climate_traits(traits, this->base_.getCapabilities());
+  if (!traits.get_supported_modes().empty())
+    traits.add_supported_mode(ClimateMode::CLIMATE_MODE_OFF);
+  if (!traits.get_supported_swing_modes().empty())
+    traits.add_supported_swing_mode(ClimateSwingMode::CLIMATE_SWING_OFF);
+  if (!traits.get_supported_presets().empty())
+    traits.add_supported_preset(ClimatePreset::CLIMATE_PRESET_NONE);
+
+  traits.set_supports_action(true); 
+
+  return traits;
+}
+
+void AirConditioner::dump_config() {
+  ESP_LOGCONFIG(Constants::TAG,
+                "MideaDongle:\n"
+                "  [x] Period: %dms\n"
+                "  [x] Response timeout: %dms\n"
+                "  [x] Request attempts: %d",
+                this->base_.getPeriod(), this->base_.getTimeout(), this->base_.getNumAttempts());
+#ifdef USE_REMOTE_TRANSMITTER
+  ESP_LOGCONFIG(Constants::TAG, "  [x] Using RemoteTransmitter");
+#endif
+  if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_OK) {
+    this->base_.getCapabilities().dump();
+  } else if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_ERROR) {
+    ESP_LOGW(Constants::TAG,
+             "Failed to get 0xB5 capabilities report. Suggest to disable it in config and manually set your "
+             "appliance options.");
+  }
+  this->dump_traits_(Constants::TAG);
+}
+
+/* ACTIONS */
+
+void AirConditioner::do_follow_me(float temperature, bool use_fahrenheit, bool beeper) {
+#ifdef USE_REMOTE_TRANSMITTER
+  // Check if temperature is finite (not NaN or infinite)
+  if (!std::isfinite(temperature)) {
+    ESP_LOGW(Constants::TAG, "Follow me action requires a finite temperature, got: %f", temperature);
+    return;
+  }
+
+  // Round and convert temperature to long, then clamp and convert it to uint8_t
+  uint8_t temp_uint8 =
+      static_cast<uint8_t>(esphome::clamp<long>(std::lroundf(temperature), 0L, static_cast<long>(UINT8_MAX)));
+
+  char temp_symbol = use_fahrenheit ? 'F' : 'C';
+  ESP_LOGD(Constants::TAG, "Follow me action called with temperature: %.5f °%c, rounded to: %u °%c", temperature,
+           temp_symbol, temp_uint8, temp_symbol);
+
+  // Create and transmit the data
+  IrFollowMeData data(temp_uint8, use_fahrenheit, beeper);
+  this->transmitter_.transmit(data);
+#else
+  ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
+}
+
+void AirConditioner::do_swing_step() {
+#ifdef USE_REMOTE_TRANSMITTER
+  IrSpecialData data(0x01);
+  this->transmitter_.transmit(data);
+#else
+  ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
+}
+
+void AirConditioner::do_display_toggle() {
+  if (this->base_.getCapabilities().supportLightControl()) {
+    this->base_.displayToggle();
+  } else {
+#ifdef USE_REMOTE_TRANSMITTER
+    IrSpecialData data(0x08);
+    this->transmitter_.transmit(data);
+#else
+    ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
+  }
+}
 
 }  // namespace ac
 }  // namespace midea
