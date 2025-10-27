@@ -60,6 +60,7 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
   void set_supported_presets(const std::set<ClimatePreset> &presets) { this->supported_presets_ = presets; }
   void set_custom_presets(const std::set<std::string> &presets) { this->supported_custom_presets_ = presets; }
   void set_custom_fan_modes(const std::set<std::string> &modes) { this->supported_custom_fan_modes_ = modes; }
+  void set_action(climate::ClimateAction new_action);
 
  protected:
   void control(const ClimateCall &call) override;
