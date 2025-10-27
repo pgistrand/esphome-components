@@ -49,6 +49,17 @@ void AirConditioner::on_status_change() {
   }
   if (need_publish)
     this->publish_state();
+
+  if (this->mode == climate::CLIMATE_MODE_OFF) {
+    set_action(climate::CLIMATE_ACTION_OFF);
+  } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
+    set_action(climate::CLIMATE_ACTION_HEATING);
+  } else if (this->mode == climate::CLIMATE_MODE_COOL) {
+    set_action(climate::CLIMATE_ACTION_COOLING);
+  } else {
+    set_action(climate::CLIMATE_ACTION_IDLE);
+  }
+  
   set_sensor(this->outdoor_sensor_, this->base_.getOutdoorTemp());
   set_sensor(this->power_sensor_, this->base_.getPowerUsage());
   set_sensor(this->energy_sensor_, this->base_.getEnergyUsage());
@@ -67,6 +78,7 @@ void AirConditioner::on_status_change() {
   set_sensor(this->idFTarget_sensor_, this->base_.getIdFTarget());
   set_sensor(this->idFVal_sensor_, this->base_.getIdFVal());
   set_sensor(this->odFVal_sensor_, this->base_.getOdFVal());
+
 }
 
 void AirConditioner::control(const ClimateCall &call) {
@@ -88,18 +100,6 @@ void AirConditioner::control(const ClimateCall &call) {
     ctrl.fanMode = Converters::to_midea_fan_mode(call.get_custom_fan_mode().value());
   }
   this->base_.control(ctrl);
-
-  if (this->mode == climate::CLIMATE_MODE_OFF) {
-    set_action(climate::CLIMATE_ACTION_OFF);
-  } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
-    set_action(climate::CLIMATE_ACTION_HEATING);
-  } else if (this->mode == climate::CLIMATE_MODE_COOL) {
-    set_action(climate::CLIMATE_ACTION_COOLING);
-  } else {
-    set_action(climate::CLIMATE_ACTION_IDLE);
-  }
-  // After processing the call, publish the new state.
-  this->publish_state();
 }
 
 void AirConditioner::set_action(climate::ClimateAction new_action) {
