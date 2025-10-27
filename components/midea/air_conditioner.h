@@ -35,6 +35,7 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
   void set_compressor_target_sensor(Sensor *sensor) { this->compressor_target_sensor_ = sensor; }
   void set_compressor_value_sensor(Sensor *sensor) { this->compressor_value_sensor_ = sensor; }
   void set_run_mode_sensor(Sensor *sensor) { this->run_mode_sensor_ = sensor; }
+  void set_defrost_sensor(Sensor *sensor) { this->defrost_sensor_ = sensor; }
   void set_val1_8_sensor(Sensor *sensor) { this->val1_8_sensor_ = sensor; }
   void set_val2_12_sensor(Sensor *sensor) { this->val2_12_sensor_ = sensor; }
   void set_idFTarget_sensor(Sensor *sensor) { this->idFTarget_sensor_ = sensor; }
@@ -80,6 +81,7 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
   Sensor *compressor_target_sensor_{nullptr};
   Sensor *compressor_value_sensor_{nullptr};
   Sensor *run_mode_sensor_{nullptr};
+  Sensor *defrost_sensor_{nullptr};
   Sensor *val1_8_sensor_{nullptr};
   Sensor *val2_12_sensor_{nullptr};
   Sensor *idFTarget_sensor_{nullptr};
