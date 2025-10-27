@@ -449,7 +449,7 @@ async def to_code(config):
         cg.add(var.set_run_mode_sensor(sens))
     if CONF_DEFROST in config:
         sens = await sensor.new_sensor(config[CONF_DEFROST])
-        cg.add(var.set_val1_8_sensor(sens))
+        cg.add(var.set_defrost_sensor(sens))
     if CONF_VAL1_8 in config:
         sens = await sensor.new_sensor(config[CONF_VAL1_8])
         cg.add(var.set_val1_8_sensor(sens))
