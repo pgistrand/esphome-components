@@ -61,6 +61,7 @@ void AirConditioner::on_status_change() {
   set_sensor(this->compressor_target_sensor_, this->base_.getCompressorTarget());
   set_sensor(this->compressor_value_sensor_, this->base_.getCompressorSpeed());
   set_sensor(this->run_mode_sensor_, this->base_.getRunMode());
+  set_sensor(this->defrost_sensor_, this->base_.getDefrost());
   set_sensor(this->val1_8_sensor_, this->base_.getVal1_8());
   set_sensor(this->val2_12_sensor_, this->base_.getVal2_12());
   set_sensor(this->idFTarget_sensor_, this->base_.getIdFTarget());
