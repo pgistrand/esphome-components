@@ -55,6 +55,7 @@ CONF_EEV = "eev"
 CONF_COMPRESSOR_TARGET= "compressor_target"
 CONF_COMPRESSOR_VALUE= "compressor_value"
 CONF_RUN_MODE = "run_mode"
+CONF_DEFROST = "defrost"
 CONF_VAL1_8 = "val1_8"
 CONF_VAL2_12 = "val2_12"
 CONF_IDF_TARGET = "indoor_fan_target"
@@ -224,6 +225,12 @@ CONFIG_SCHEMA = cv.All(
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
             cv.Optional(CONF_RUN_MODE): sensor.sensor_schema(
+                unit_of_measurement=UNIT_EMPTY,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_EMPTY,
+                state_class=STATE_CLASS_MEASUREMENT,
+            ),
+            cv.Optional(CONF_DEFROST): sensor.sensor_schema(
                 unit_of_measurement=UNIT_EMPTY,
                 accuracy_decimals=0,
                 device_class=DEVICE_CLASS_EMPTY,
@@ -440,6 +447,9 @@ async def to_code(config):
     if CONF_RUN_MODE in config:
         sens = await sensor.new_sensor(config[CONF_RUN_MODE])
         cg.add(var.set_run_mode_sensor(sens))
+    if CONF_DEFROST in config:
+        sens = await sensor.new_sensor(config[CONF_DEFROST])
+        cg.add(var.set_val1_8_sensor(sens))
     if CONF_VAL1_8 in config:
         sens = await sensor.new_sensor(config[CONF_VAL1_8])
         cg.add(var.set_val1_8_sensor(sens))
