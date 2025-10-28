@@ -1,345 +1,220 @@
-#include "Appliance/AirConditioner/AirConditioner.h"
-#include "Helpers/Timer.h"
-#include "Helpers/Log.h"
+#ifdef USE_ARDUINO
 
-namespace dudanov {
+#include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
+#include "air_conditioner.h"
+#include "ac_adapter.h"
+#include <cmath>
+#include <cstdint>
+
+namespace esphome {
 namespace midea {
 namespace ac {
 
-static const char *TAG = "AirConditioner";
-
-void AirConditioner::m_runSeq() {
-
-  if (this->m_seq == 0)
-    this->m_getStatus();
-  else if(this->m_seq == 1){
-    this->m_getDiag1();
-  }
-  else if(this->m_seq == 2){
-    this->m_getStatus();
-  }
-  else if(this->m_seq == 3){
-    this->m_getDiag2();
-  }
-  else if(this->m_seq == 4){
-    this->m_getStatus();
-  }
-  else if(this->m_seq == 5){
-    this->m_getDiag3();
-  }
-
-  this->m_seq++;
-  if(this->m_seq>5){this->m_seq=0;}
+static void set_binary_sensor(BinarySensor *sensor, float value) {
+  if (sensor != nullptr && (!sensor->has_state() || sensor->state != value))
+    sensor->publish_state(value);
 }
 
-void AirConditioner::m_setup() {
-  if (this->m_autoconfStatus != AUTOCONF_DISABLED)
-    this->m_getCapabilities();
-  this->m_timerManager.registerTimer(this->m_powerUsageTimer);
-  this->m_powerUsageTimer.setCallback([this](Timer *timer) {
-    timer->reset();
-    this->m_getPowerUsage();
-  });
-  this->m_powerUsageTimer.start(30000);
+static void set_sensor(Sensor *sensor, float value) {
+  if (sensor != nullptr && (!sensor->has_state() || sensor->get_raw_state() != value))
+    sensor->publish_state(value);
 }
 
-static bool checkConstraints(const Mode &mode, const Preset &preset) {
-  if (mode == Mode::MODE_OFF)
-    return preset == Preset::PRESET_NONE;
-  switch (preset) {
-    case Preset::PRESET_NONE:
-      return true;
-    case Preset::PRESET_ECO:
-      return mode == Mode::MODE_COOL;
-    case Preset::PRESET_TURBO:
-      return mode == Mode::MODE_COOL || mode == Mode::MODE_HEAT;
-    case Preset::PRESET_SLEEP:
-      return mode != Mode::MODE_DRY && mode != Mode::MODE_FAN_ONLY;
-    case Preset::PRESET_FREEZE_PROTECTION:
-      return mode == Mode::MODE_HEAT;
-    default:
-      return false;
-  }
-}
-
-void AirConditioner::control(const Control &control) {
-  if (this->m_sendControl)
-    return;
-  StatusData status = this->m_status;
-  Mode mode = this->m_mode;
-  Preset preset = this->m_preset;
-  bool hasUpdate = false;
-  bool isModeChanged = false;
-  if (control.mode.hasUpdate(mode)) {
-    hasUpdate = true;
-    isModeChanged = true;
-    mode = control.mode.value();
-    if (this->m_mode == Mode::MODE_OFF)
-      preset = this->m_lastPreset;
-    else if (!checkConstraints(mode, preset))
-      preset = Preset::PRESET_NONE;
-  }
-  if (control.preset.hasUpdate(preset) && checkConstraints(mode, control.preset.value())) {
-    hasUpdate = true;
-    preset = control.preset.value();
-  }
-  if (mode != Mode::MODE_OFF) {
-    if (mode == Mode::MODE_AUTO || preset != Preset::PRESET_NONE) {
-      if (this->m_fanMode != FanMode::FAN_AUTO) {
-        hasUpdate = true;
-        status.setFanMode(FanMode::FAN_AUTO);
-      }
-    } else if (control.fanMode.hasUpdate(this->m_fanMode)) {
-      hasUpdate = true;
-      status.setFanMode(control.fanMode.value());
-    }
-    if (control.swingMode.hasUpdate(this->m_swingMode)) {
-      hasUpdate = true;
-      status.setSwingMode(control.swingMode.value());
-    }
-  }
-  if (control.targetTemp.hasUpdate(this->m_targetTemp)) {
-    hasUpdate = true;
-    status.setTargetTemp(control.targetTemp.value());
-  }
-  if (hasUpdate) {
-    this->m_sendControl = true;
-    status.setMode(mode);
-    status.setPreset(preset);
-    status.setBeeper(this->m_beeper);
-    status.appendCRC();
-    if (isModeChanged && preset != Preset::PRESET_NONE && preset != Preset::PRESET_SLEEP) {
-      // Last command with preset
-      this->m_setStatus(status);
-      status.setPreset(Preset::PRESET_NONE);
-      status.setBeeper(false);
-      status.updateCRC();
-      // First command without preset
-      this->m_queueRequestPriority(FrameType::DEVICE_CONTROL, std::move(status),
-        // onData
-        std::bind(&AirConditioner::m_readStatus, this, std::placeholders::_1)
-      );
-    } else {
-      this->m_setStatus(std::move(status));
-    }
-  }
-}
-
-void AirConditioner::m_setStatus(StatusData status) {
-  LOG_D(TAG, "Enqueuing a priority SET_STATUS(0x40) request...");
-  this->m_queueRequestPriority(FrameType::DEVICE_CONTROL, std::move(status),
-    // onData
-    std::bind(&AirConditioner::m_readStatus, this, std::placeholders::_1),
-    // onSuccess
-    [this]() {
-      this->m_sendControl = false;
-    },
-    // onError
-    [this]() {
-      LOG_W(TAG, "SET_STATUS(0x40) request failed...");
-      this->m_sendControl = false;
-    }
-  );
-}
-
-void AirConditioner::setPowerState(bool state) {
-  if (state != this->getPowerState()) {
-    Control control;
-    control.mode = state ? this->m_status.getRawMode() : Mode::MODE_OFF;
-    this->control(control);
-  }
-}
-
-void AirConditioner::m_getPowerUsage() {
-  QueryPowerData data{};
-  LOG_D(TAG, "Enqueuing a GET_POWERUSAGE(0x41 00 00 04) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    [this](FrameData data) -> ResponseStatus {
-      const auto status = data.to<StatusData>();
-      if (!status.hasValues())
-        return ResponseStatus::RESPONSE_WRONG;
-      LOG_D(TAG, "Receiving Power/Energy Values");
-//      if (status.hasValuesPower()) {
-        if (this->m_energyUsage != status.getEnergyUsage()) {
-          this->m_energyUsage = status.getEnergyUsage();
-          this->sendUpdate();
-          LOG_D(TAG, "Updating EnergyUsage");
-        }
-        if (this->m_powerUsage != status.getPowerUsage()) {
-          this->m_powerUsage = status.getPowerUsage();
-          this->sendUpdate();
-          LOG_D(TAG, "Updating PowerUsage");
-        }
-//      }
-      return ResponseStatus::RESPONSE_OK;
-    }
-  );
-}
-
-void AirConditioner::m_getCapabilities() {
-  GetCapabilitiesData data{};
-  this->m_autoconfStatus = AUTOCONF_PROGRESS;
-  LOG_D(TAG, "Enqueuing a priority GET_CAPABILITIES(0xB5) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    [this](FrameData data) -> ResponseStatus {
-      if (!data.hasID(0xB5))
-        return ResponseStatus::RESPONSE_WRONG;
-      if (this->m_capabilities.read(data)) {
-        GetCapabilitiesSecondData data{};
-        this->m_sendFrame(FrameType::DEVICE_QUERY, data);
-        return ResponseStatus::RESPONSE_PARTIAL;
-      }
-      return ResponseStatus::RESPONSE_OK;
-    },
-    // onSuccess
-    [this]() {
-      this->m_autoconfStatus = AUTOCONF_OK;
-    },
-    // onError
-    [this]() {
-      LOG_W(TAG, "Failed to get 0xB5 capabilities report.");
-      this->m_autoconfStatus = AUTOCONF_ERROR;
-    }
-  );
-}
-
-void AirConditioner::m_getStatus() {
-  QueryStateData data{};
-  LOG_D(TAG, "Enqueuing a GET_STATUS(41 00 00 FF) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    std::bind(&AirConditioner::m_readStatus, this, std::placeholders::_1)
-  );
-}
-
-void AirConditioner::m_displayToggle() {
-  DisplayToggleData data{};
-  LOG_D(TAG, "Enqueuing a priority TOGGLE_LIGHT(0x41) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    std::bind(&AirConditioner::m_readStatus, this, std::placeholders::_1)
-  );
-}
-
-template<typename T>
-void setProperty(T &property, const T &value, bool &update) {
+template<typename T> void update_property(T &property, const T &value, bool &flag) {
   if (property != value) {
     property = value;
-    update = true;
+    flag = true;
   }
 }
 
-ResponseStatus AirConditioner::m_readStatus(FrameData data) {
-  if (!data.hasStatus())
-    return ResponseStatus::RESPONSE_WRONG;
-  LOG_D(TAG, "New status data received. Parsing...");
-  bool hasUpdate = false;
-  const StatusData newStatus = data.to<StatusData>();
-  this->m_status.copyStatus(newStatus);
-  if (this->m_mode != newStatus.getMode()) {
-    hasUpdate = true;
-    this->m_mode = newStatus.getMode();
-    if (newStatus.getMode() == Mode::MODE_OFF)
-      this->m_lastPreset = this->m_preset;
+void AirConditioner::on_status_change() {
+  bool need_publish = false;
+  update_property(this->target_temperature, this->base_.getTargetTemp(), need_publish);
+  update_property(this->current_temperature, this->base_.getIndoorTemp(), need_publish);
+  auto mode = Converters::to_climate_mode(this->base_.getMode());
+  update_property(this->mode, mode, need_publish);
+  auto swing_mode = Converters::to_climate_swing_mode(this->base_.getSwingMode());
+  update_property(this->swing_mode, swing_mode, need_publish);
+  // Preset
+  auto preset = this->base_.getPreset();
+  if (Converters::is_custom_midea_preset(preset)) {
+    if (this->set_custom_preset_(Converters::to_custom_climate_preset(preset)))
+      need_publish = true;
+  } else if (this->set_preset_(Converters::to_climate_preset(preset))) {
+    need_publish = true;
   }
-  setProperty(this->m_preset, newStatus.getPreset(), hasUpdate);
-  setProperty(this->m_fanMode, newStatus.getFanMode(), hasUpdate);
-  setProperty(this->m_swingMode, newStatus.getSwingMode(), hasUpdate);
-  setProperty(this->m_targetTemp, newStatus.getTargetTemp(), hasUpdate);
-  setProperty(this->m_indoorTemp, newStatus.getIndoorTemp(), hasUpdate);
-  setProperty(this->m_outdoorTemp, newStatus.getOutdoorTemp(), hasUpdate);
-  setProperty(this->m_indoorHumidity, newStatus.getHumiditySetpoint(), hasUpdate);
-  if (hasUpdate)
-    this->sendUpdate();
-  return ResponseStatus::RESPONSE_OK;
+  // Fan mode
+  auto fan_mode = this->base_.getFanMode();
+  if (Converters::is_custom_midea_fan_mode(fan_mode)) {
+    if (this->set_custom_fan_mode_(Converters::to_custom_climate_fan_mode(fan_mode)))
+      need_publish = true;
+  } else if (this->set_fan_mode_(Converters::to_climate_fan_mode(fan_mode))) {
+    need_publish = true;
+  }
+  if (need_publish)
+    this->publish_state();
+
+  if (this->mode == climate::CLIMATE_MODE_OFF) {
+    set_action(climate::CLIMATE_ACTION_OFF);
+  } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
+    set_action(climate::CLIMATE_ACTION_HEATING);
+  } else if (this->mode == climate::CLIMATE_MODE_COOL) {
+    set_action(climate::CLIMATE_ACTION_COOLING);
+  } else {
+    set_action(climate::CLIMATE_ACTION_IDLE);
+  }
+  
+  set_sensor(this->outdoor_sensor_, this->base_.getOutdoorTemp());
+  set_sensor(this->power_sensor_, this->base_.getPowerUsage());
+  set_sensor(this->energy_sensor_, this->base_.getEnergyUsage());
+  set_sensor(this->humidity_sensor_, this->base_.getIndoorHum());
+  set_sensor(this->t1_sensor_, this->base_.getT1Temp());
+  set_sensor(this->t2_sensor_, this->base_.getT2Temp());
+  set_sensor(this->t3_sensor_, this->base_.getT3Temp());
+  set_sensor(this->t4_sensor_, this->base_.getT4Temp());
+  set_sensor(this->eev_sensor_, this->base_.getEEV());
+  set_sensor(this->compressor_target_sensor_, this->base_.getCompressorTarget());
+  set_sensor(this->compressor_value_sensor_, this->base_.getCompressorSpeed());
+  set_sensor(this->run_mode_sensor_, this->base_.getRunMode());
+  set_binary_sensor(this->defrost_sensor_, this->base_.getDefrost());
+  set_sensor(this->val1_8_sensor_, this->base_.getVal1_8());
+  set_sensor(this->val2_12_sensor_, this->base_.getVal2_12());
+  set_sensor(this->idFTarget_sensor_, this->base_.getIdFTarget());
+  set_sensor(this->idFVal_sensor_, this->base_.getIdFVal());
+  set_sensor(this->odFVal_sensor_, this->base_.getOdFVal());
+
 }
 
-void AirConditioner::m_getDiag1() {
-  QueryDiagData1 data{};
-  LOG_D(TAG, "Enqueuing a GET_STATUS(41 00 00 01) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    std::bind(&AirConditioner::m_readDiag1, this, std::placeholders::_1)
-  );
+void AirConditioner::control(const ClimateCall &call) {
+  dudanov::midea::ac::Control ctrl{};
+  if (call.get_target_temperature().has_value())
+    ctrl.targetTemp = call.get_target_temperature().value();
+  if (call.get_swing_mode().has_value())
+    ctrl.swingMode = Converters::to_midea_swing_mode(call.get_swing_mode().value());
+  if (call.get_mode().has_value())
+    ctrl.mode = Converters::to_midea_mode(call.get_mode().value());
+  if (call.get_preset().has_value()) {
+    ctrl.preset = Converters::to_midea_preset(call.get_preset().value());
+  } else if (call.get_custom_preset().has_value()) {
+    ctrl.preset = Converters::to_midea_preset(call.get_custom_preset().value());
+  }
+  if (call.get_fan_mode().has_value()) {
+    ctrl.fanMode = Converters::to_midea_fan_mode(call.get_fan_mode().value());
+  } else if (call.get_custom_fan_mode().has_value()) {
+    ctrl.fanMode = Converters::to_midea_fan_mode(call.get_custom_fan_mode().value());
+  }
+  this->base_.control(ctrl);
 }
-void AirConditioner::m_getDiag2() {
-  QueryDiagData2 data{};
-  LOG_D(TAG, "Enqueuing a GET_STATUS(41 00 00 02) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    std::bind(&AirConditioner::m_readDiag2, this, std::placeholders::_1)
-  );
+
+void AirConditioner::set_action(climate::ClimateAction new_action) {
+  // Only update the action if it has actually changed to prevent excessive state updates.
+  if (this->action != new_action) {
+    this->action = new_action;
+    this->publish_state();
+  }
 }
-void AirConditioner::m_getDiag3() {
-  QueryDiagData3 data{};
-  LOG_D(TAG, "Enqueuing a GET_STATUS(41 00 00 03) request...");
-  this->m_queueRequest(FrameType::DEVICE_QUERY, std::move(data),
-    // onData
-    std::bind(&AirConditioner::m_readDiag3, this, std::placeholders::_1)
-  );
+
+ClimateTraits AirConditioner::traits() {
+  auto traits = ClimateTraits();
+  traits.set_supports_current_temperature(true);
+  traits.set_visual_min_temperature(17);
+  traits.set_visual_max_temperature(30);
+  traits.set_visual_temperature_step(0.5);
+  traits.set_supported_modes(this->supported_modes_);
+  traits.set_supported_swing_modes(this->supported_swing_modes_);
+  traits.set_supported_presets(this->supported_presets_);
+  traits.set_supported_custom_presets(this->supported_custom_presets_);
+  traits.set_supported_custom_fan_modes(this->supported_custom_fan_modes_);
+  /* + MINIMAL SET OF CAPABILITIES */
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_AUTO);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_LOW);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_MEDIUM);
+  traits.add_supported_fan_mode(ClimateFanMode::CLIMATE_FAN_HIGH);
+  if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_OK)
+    Converters::to_climate_traits(traits, this->base_.getCapabilities());
+  if (!traits.get_supported_modes().empty())
+    traits.add_supported_mode(ClimateMode::CLIMATE_MODE_OFF);
+  if (!traits.get_supported_swing_modes().empty())
+    traits.add_supported_swing_mode(ClimateSwingMode::CLIMATE_SWING_OFF);
+  if (!traits.get_supported_presets().empty())
+    traits.add_supported_preset(ClimatePreset::CLIMATE_PRESET_NONE);
+
+  traits.set_supports_action(true); 
+
+  return traits;
 }
-// --------------------------------------------------------------------------------
-ResponseStatus AirConditioner::m_readDiag1(FrameData data) {
-  if (! (data.hasValues() && (data.subType()==1)) )
-    return ResponseStatus::RESPONSE_WRONG;
 
-  LOG_D(TAG, "New diag1 data received. Parsing...");
-  bool hasUpdate = false;
-
-  const DiagData newDiag = data.to<DiagData>();
-  this->m_diag.copyDiag(newDiag);
-  setProperty(this->m_compressorSpeed, newDiag.getCompressorSpeed(), hasUpdate);
-  setProperty(this->m_t1Temp, newDiag.getT1Temp(), hasUpdate);
-  setProperty(this->m_t2Temp, newDiag.getT2Temp(), hasUpdate);
-  setProperty(this->m_t3Temp, newDiag.getT3Temp(), hasUpdate);
-  setProperty(this->m_t4Temp, newDiag.getT4Temp(), hasUpdate);
-  setProperty(this->m_eev, newDiag.getEEV(), hasUpdate);
-  setProperty(this->m_runMode, newDiag.getRunMode(), hasUpdate);
-  setProperty(this->m_val1_8, newDiag.getVal1_8(), hasUpdate);
-
-  if (hasUpdate)
-    this->sendUpdate();
-  return ResponseStatus::RESPONSE_OK;
+void AirConditioner::dump_config() {
+  ESP_LOGCONFIG(Constants::TAG,
+                "MideaDongle:\n"
+                "  [x] Period: %dms\n"
+                "  [x] Response timeout: %dms\n"
+                "  [x] Request attempts: %d",
+                this->base_.getPeriod(), this->base_.getTimeout(), this->base_.getNumAttempts());
+#ifdef USE_REMOTE_TRANSMITTER
+  ESP_LOGCONFIG(Constants::TAG, "  [x] Using RemoteTransmitter");
+#endif
+  if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_OK) {
+    this->base_.getCapabilities().dump();
+  } else if (this->base_.getAutoconfStatus() == dudanov::midea::AUTOCONF_ERROR) {
+    ESP_LOGW(Constants::TAG,
+             "Failed to get 0xB5 capabilities report. Suggest to disable it in config and manually set your "
+             "appliance options.");
+  }
+  this->dump_traits_(Constants::TAG);
 }
-// --------------------------------------------------------------------------------
-ResponseStatus AirConditioner::m_readDiag2(FrameData data) {
-  if (! ( data.hasValues() && (data.subType()==2) ))
-    return ResponseStatus::RESPONSE_WRONG;
 
-  LOG_D(TAG, "New diag2 data received. Parsing...");
-  bool hasUpdate = false;
+/* ACTIONS */
 
-  const DiagData newDiag = data.to<DiagData>();
-  this->m_diag.copyDiag(newDiag);
-  setProperty(this->m_idFTarget, newDiag.getIdFTarget(), hasUpdate);
-  setProperty(this->m_idFVal, newDiag.getIdFVal(), hasUpdate);
-  setProperty(this->m_defrost, newDiag.getDefrost(), hasUpdate);
-  setProperty(this->m_val2_12, newDiag.getVal2_12(), hasUpdate);
+void AirConditioner::do_follow_me(float temperature, bool use_fahrenheit, bool beeper) {
+#ifdef USE_REMOTE_TRANSMITTER
+  // Check if temperature is finite (not NaN or infinite)
+  if (!std::isfinite(temperature)) {
+    ESP_LOGW(Constants::TAG, "Follow me action requires a finite temperature, got: %f", temperature);
+    return;
+  }
 
-  if (hasUpdate)
-    this->sendUpdate();
-  return ResponseStatus::RESPONSE_OK;
+  // Round and convert temperature to long, then clamp and convert it to uint8_t
+  uint8_t temp_uint8 =
+      static_cast<uint8_t>(esphome::clamp<long>(std::lroundf(temperature), 0L, static_cast<long>(UINT8_MAX)));
+
+  char temp_symbol = use_fahrenheit ? 'F' : 'C';
+  ESP_LOGD(Constants::TAG, "Follow me action called with temperature: %.5f °%c, rounded to: %u °%c", temperature,
+           temp_symbol, temp_uint8, temp_symbol);
+
+  // Create and transmit the data
+  IrFollowMeData data(temp_uint8, use_fahrenheit, beeper);
+  this->transmitter_.transmit(data);
+#else
+  ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
 }
-// --------------------------------------------------------------------------------
-ResponseStatus AirConditioner::m_readDiag3(FrameData data) {
-  if (! ( data.hasValues() && (data.subType()==3) ))
-    return ResponseStatus::RESPONSE_WRONG;
 
-  LOG_D(TAG, "New diag3 data received. Parsing...");
-  bool hasUpdate = false;
+void AirConditioner::do_swing_step() {
+#ifdef USE_REMOTE_TRANSMITTER
+  IrSpecialData data(0x01);
+  this->transmitter_.transmit(data);
+#else
+  ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
+}
 
-  const DiagData newDiag = data.to<DiagData>();
-  this->m_diag.copyDiag(newDiag);
-  setProperty(this->m_odFVal, newDiag.getOdFVal(), hasUpdate);
-  setProperty(this->m_compressorTarget, newDiag.getCompressorTarget(), hasUpdate);
-
-  if (hasUpdate)
-    this->sendUpdate();
-  return ResponseStatus::RESPONSE_OK;
+void AirConditioner::do_display_toggle() {
+  if (this->base_.getCapabilities().supportLightControl()) {
+    this->base_.displayToggle();
+  } else {
+#ifdef USE_REMOTE_TRANSMITTER
+    IrSpecialData data(0x08);
+    this->transmitter_.transmit(data);
+#else
+    ESP_LOGW(Constants::TAG, "Action needs remote_transmitter component");
+#endif
+  }
 }
 
 }  // namespace ac
 }  // namespace midea
-}  // namespace dudanov
+}  // namespace esphome
+
+#endif  // USE_ARDUINO
