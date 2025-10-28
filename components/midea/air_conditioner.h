@@ -1,108 +1,98 @@
 #pragma once
-#include <Arduino.h>
-#include "Appliance/ApplianceBase.h"
-#include "Appliance/AirConditioner/Capabilities.h"
-#include "Appliance/AirConditioner/StatusData.h"
-#include "Appliance/AirConditioner/DiagData.h"
-#include "Helpers/Helpers.h"
 
-namespace dudanov {
+#ifdef USE_ARDUINO
+
+// MideaUART
+#include <Appliance/AirConditioner/AirConditioner.h>
+
+#include "appliance_base.h"
+#include "esphome/components/sensor/sensor.h"
+
+namespace esphome {
 namespace midea {
 namespace ac {
 
-// Air conditioner control command
-struct Control {
-  Optional<float> targetTemp{};
-  Optional<Mode> mode{};
-  Optional<Preset> preset{};
-  Optional<FanMode> fanMode{};
-  Optional<SwingMode> swingMode{};
-};
+using binary_sensor::BinarySensor;
+using sensor::Sensor;
+using climate::ClimateCall;
+using climate::ClimatePreset;
+using climate::ClimateTraits;
+using climate::ClimateMode;
+using climate::ClimateSwingMode;
+using climate::ClimateFanMode;
 
-class AirConditioner : public ApplianceBase {
+class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>, public climate::Climate {
  public:
-  AirConditioner() : ApplianceBase(AIR_CONDITIONER) {}
-  void m_setup() override;
-  void m_onIdle() override { this->m_runSeq(); }
-  //void m_onIdle2() override {this->m_getDiag1();this->m_getDiag2(); }
-  void control(const Control &control);
-  void setPowerState(bool state);
-  bool getPowerState() const { return this->m_mode != Mode::MODE_OFF; }
-  void togglePowerState() { this->setPowerState(this->m_mode == Mode::MODE_OFF); }
-  float getTargetTemp() const { return this->m_targetTemp; }
-  float getIndoorTemp() const { return this->m_indoorTemp; }
-  float getOutdoorTemp() const { return this->m_outdoorTemp; }
-  float getT1Temp() const { return this->m_t1Temp; }
-  float getT2Temp() const { return this->m_t2Temp; }
-  float getT3Temp() const { return this->m_t3Temp; }
-  float getT4Temp() const { return this->m_t4Temp; }
-  float getEEV() const { return this->m_eev; }
-  float getIndoorHum() const { return this->m_indoorHumidity; }
-  float getEnergyUsage() const { return this->m_energyUsage; }
-  float getPowerUsage() const { return this->m_powerUsage; }
-  float getCompressorTarget() const { return this->m_compressorTarget; }
-  float getCompressorSpeed() const { return this->m_compressorSpeed; }
-  float getIdFTarget() const { return this->m_idFTarget; }
-  float getIdFVal() const { return this->m_idFVal; }
-  float getOdFVal() const { return this->m_odFVal; }
-  float getRunMode() const { return this->m_runMode; }
-  bool  getDefrost() const { return this->m_defrost; }
-  float getVal1_8() const { return this->m_val1_8; }
-  float getVal2_12() const { return this->m_val2_12; }
-  Mode getMode() const { return this->m_mode; }
-  SwingMode getSwingMode() const { return this->m_swingMode; }
-  FanMode getFanMode() const { return this->m_fanMode; }
-  Preset getPreset() const { return this->m_preset; }
-  const Capabilities &getCapabilities() const { return this->m_capabilities; }
-  void displayToggle() { this->m_displayToggle(); }
+  void dump_config() override;
+  void set_outdoor_temperature_sensor(Sensor *sensor) { this->outdoor_sensor_ = sensor; }
+  void set_t1_temperature_sensor(Sensor *sensor) { this->t1_sensor_ = sensor; }
+  void set_t2_temperature_sensor(Sensor *sensor) { this->t2_sensor_ = sensor; }
+  void set_t3_temperature_sensor(Sensor *sensor) { this->t3_sensor_ = sensor; }
+  void set_t4_temperature_sensor(Sensor *sensor) { this->t4_sensor_ = sensor; }
+  void set_eev_sensor(Sensor *sensor) { this->eev_sensor_ = sensor; }
+  void set_humidity_setpoint_sensor(Sensor *sensor) { this->humidity_sensor_ = sensor; }
+  void set_power_sensor(Sensor *sensor) { this->power_sensor_ = sensor; }
+  void set_energy_sensor(Sensor *sensor) { this->energy_sensor_ = sensor; }
+  void set_compressor_target_sensor(Sensor *sensor) { this->compressor_target_sensor_ = sensor; }
+  void set_compressor_value_sensor(Sensor *sensor) { this->compressor_value_sensor_ = sensor; }
+  void set_run_mode_sensor(Sensor *sensor) { this->run_mode_sensor_ = sensor; }
+  void set_defrost_sensor(BinarySensor *sensor) { this->defrost_sensor_ = sensor; }
+  void set_val1_8_sensor(Sensor *sensor) { this->val1_8_sensor_ = sensor; }
+  void set_val2_12_sensor(Sensor *sensor) { this->val2_12_sensor_ = sensor; }
+  void set_idFTarget_sensor(Sensor *sensor) { this->idFTarget_sensor_ = sensor; }
+  void set_idFVal_sensor(Sensor *sensor) { this->idFVal_sensor_ = sensor; }
+  void set_odFVal_sensor(Sensor *sensor) { this->odFVal_sensor_ = sensor; }
+  void on_status_change() override;
+
+  /* ############### */
+  /* ### ACTIONS ### */
+  /* ############### */
+
+  void do_follow_me(float temperature, bool use_fahrenheit, bool beeper = false);
+  void do_display_toggle();
+  void do_swing_step();
+  void do_beeper_on() { this->set_beeper_feedback(true); }
+  void do_beeper_off() { this->set_beeper_feedback(false); }
+  void do_power_on() { this->base_.setPowerState(true); }
+  void do_power_off() { this->base_.setPowerState(false); }
+  void do_power_toggle() { this->base_.setPowerState(this->mode == ClimateMode::CLIMATE_MODE_OFF); }
+  void set_supported_modes(const std::set<ClimateMode> &modes) { this->supported_modes_ = modes; }
+  void set_supported_swing_modes(const std::set<ClimateSwingMode> &modes) { this->supported_swing_modes_ = modes; }
+  void set_supported_presets(const std::set<ClimatePreset> &presets) { this->supported_presets_ = presets; }
+  void set_custom_presets(const std::set<std::string> &presets) { this->supported_custom_presets_ = presets; }
+  void set_custom_fan_modes(const std::set<std::string> &modes) { this->supported_custom_fan_modes_ = modes; }
+  void set_action(climate::ClimateAction new_action);
+
  protected:
-  void m_getEnergyUsage();
-  void m_getPowerUsage();
-  void m_getCapabilities();
-  void m_getStatus();
-  void m_setStatus(StatusData status);
-  void m_displayToggle();
-  void m_getDiag1();
-  void m_getDiag2();
-  void m_getDiag3();
-  void m_runSeq();
-  ResponseStatus m_readStatus(FrameData data);
-  ResponseStatus m_readDiag1(FrameData data);
-  ResponseStatus m_readDiag2(FrameData data);
-  ResponseStatus m_readDiag3(FrameData data);
-  Capabilities m_capabilities{};
-  Timer m_powerUsageTimer;
-  float m_indoorHumidity{};
-  float m_indoorTemp{};
-  float m_outdoorTemp{};
-  float m_t1Temp{};
-  float m_t2Temp{};
-  float m_t3Temp{};
-  float m_t4Temp{};
-  float m_eev{};
-  float m_runMode{};
-  float m_defrost{};
-  float m_val1_8{};
-  float m_val2_12{};
-  float m_targetTemp{};
-  float m_powerUsage{};
-  float m_energyUsage{};
-  float m_compressorTarget{};
-  float m_compressorSpeed{};
-  float m_idFTarget{};
-  float m_idFVal{};
-  float m_odFVal{};
-  Mode m_mode{Mode::MODE_OFF};
-  Preset m_preset{Preset::PRESET_NONE};
-  FanMode m_fanMode{FanMode::FAN_AUTO};
-  SwingMode m_swingMode{SwingMode::SWING_OFF};
-  Preset m_lastPreset{Preset::PRESET_NONE};
-  StatusData m_status{};
-  DiagData m_diag{};
-  bool m_sendControl{};
-  uint8_t m_seq{};
+  void control(const ClimateCall &call) override;
+  ClimateTraits traits() override;
+  std::set<ClimateMode> supported_modes_{};
+  std::set<ClimateSwingMode> supported_swing_modes_{};
+  std::set<ClimatePreset> supported_presets_{};
+  std::set<std::string> supported_custom_presets_{};
+  std::set<std::string> supported_custom_fan_modes_{};
+  Sensor *outdoor_sensor_{nullptr};
+  Sensor *humidity_sensor_{nullptr};
+  Sensor *power_sensor_{nullptr};
+  Sensor *energy_sensor_{nullptr};
+  Sensor *t1_sensor_{nullptr};
+  Sensor *t2_sensor_{nullptr};
+  Sensor *t3_sensor_{nullptr};
+  Sensor *t4_sensor_{nullptr};
+  Sensor *eev_sensor_{nullptr};
+  Sensor *compressor_target_sensor_{nullptr};
+  Sensor *compressor_value_sensor_{nullptr};
+  Sensor *run_mode_sensor_{nullptr};
+  BinarySensor *defrost_sensor_{nullptr};
+  Sensor *val1_8_sensor_{nullptr};
+  Sensor *val2_12_sensor_{nullptr};
+  Sensor *idFTarget_sensor_{nullptr};
+  Sensor *idFVal_sensor_{nullptr};
+  Sensor *odFVal_sensor_{nullptr};
 };
 
 }  // namespace ac
 }  // namespace midea
-}  // namespace dudanov
+}  // namespace esphome
+
+#endif  // USE_ARDUINO
