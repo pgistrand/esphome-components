@@ -1,6 +1,6 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import climate, remote_transmitter, binary_sensor, sensor, uart
+from esphome.components import climate, remote_transmitter, sensor, uart
 from esphome.components.climate import ClimateMode, ClimatePreset, ClimateSwingMode
 from esphome.components.remote_base import CONF_TRANSMITTER_ID
 import esphome.config_validation as cv
@@ -231,8 +231,11 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_EMPTY,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
-            cv.Optional(CONF_DEFROST): binary_sensor.binary_sensor_schema(
-                device_class=DEVICE_CLASS_RUNNING,
+            cv.Optional(CONF_DEFROST): sensor.sensor_schema(
+                unit_of_measurement=UNIT_EMPTY,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_EMPTY,
+                state_class=STATE_CLASS_MEASUREMENT,
             ),
             cv.Optional(CONF_VAL1_8): sensor.sensor_schema(
                 unit_of_measurement=UNIT_EMPTY,
@@ -268,7 +271,7 @@ CONFIG_SCHEMA = cv.All(
     )
     .extend(uart.UART_DEVICE_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA),
-    #cv.only_with_arduino,
+    cv.only_with_arduino,
 )
 
 # Actions
@@ -446,7 +449,7 @@ async def to_code(config):
         sens = await sensor.new_sensor(config[CONF_RUN_MODE])
         cg.add(var.set_run_mode_sensor(sens))
     if CONF_DEFROST in config:
-        sens = await binary_sensor.new_sensor(config[CONF_DEFROST])
+        sens = await sensor.new_sensor(config[CONF_DEFROST])
         cg.add(var.set_defrost_sensor(sens))
     if CONF_VAL1_8 in config:
         sens = await sensor.new_sensor(config[CONF_VAL1_8])
