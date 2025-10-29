@@ -44,6 +44,8 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
   void set_odFVal_sensor(Sensor *sensor) { this->odFVal_sensor_ = sensor; }
   void on_status_change() override;
 
+  bool getDefrost(){return (bool)this->base_.getDefrost();}
+
   /* ############### */
   /* ### ACTIONS ### */
   /* ############### */
