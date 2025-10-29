@@ -11,11 +11,6 @@ namespace esphome {
 namespace midea {
 namespace ac {
 
-static void set_binary_sensor(BinarySensor *sensor, float value) {
-  if (sensor != nullptr && (!sensor->has_state() || sensor->state != value))
-    sensor->publish_state(value);
-}
-
 static void set_sensor(Sensor *sensor, float value) {
   if (sensor != nullptr && (!sensor->has_state() || sensor->get_raw_state() != value))
     sensor->publish_state(value);
@@ -67,7 +62,7 @@ void AirConditioner::on_status_change() {
   set_sensor(this->compressor_target_sensor_, this->base_.getCompressorTarget());
   set_sensor(this->compressor_value_sensor_, this->base_.getCompressorSpeed());
   set_sensor(this->run_mode_sensor_, this->base_.getRunMode());
-  set_binary_sensor(this->defrost_sensor_, this->base_.getDefrost());
+  set_sensor(this->defrost_sensor_, this->base_.getDefrost());
   set_sensor(this->val1_8_sensor_, this->base_.getVal1_8());
   set_sensor(this->val2_12_sensor_, this->base_.getVal2_12());
   set_sensor(this->idFTarget_sensor_, this->base_.getIdFTarget());
@@ -76,7 +71,7 @@ void AirConditioner::on_status_change() {
 
   if (this->mode == climate::CLIMATE_MODE_OFF) {
     set_action(climate::CLIMATE_ACTION_OFF);
-  } else if (this->mode == climate::CLIMATE_MODE_HEAT && !this->base_.getDefrost() && this->base_.getCompressorSpeed() > 0) {
+  } else if (this->mode == climate::CLIMATE_MODE_HEAT && this->base_.getDefrost() == 0 && this->base_.getCompressorSpeed() > 0) {
     set_action(climate::CLIMATE_ACTION_HEATING);
   } else if (this->mode == climate::CLIMATE_MODE_COOL && this->base_.getCompressorSpeed() > 0) {
     set_action(climate::CLIMATE_ACTION_COOLING);
